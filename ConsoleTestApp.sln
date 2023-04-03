@@ -9,6 +9,11 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CSharpOpenVinoV2", "CsharpO
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ConsoleTestNuma", "ConsoleTestNuma\ConsoleTestNuma.csproj", "{25B6F8C3-158E-4BF9-9ECC-899A1E8423AC}"
 EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution Items", "Solution Items", "{2797ACF2-2DEE-4F0C-AB59-737AE1FBD548}"
+	ProjectSection(SolutionItems) = preProject
+		README.md = README.md
+	EndProjectSection
+EndProject
 Global
 	GlobalSection(SharedMSBuildProjectFiles) = preSolution
 		OpenVinoEngine\OpenVinoEngine.projitems*{25b6f8c3-158e-4bf9-9ecc-899a1e8423ac}*SharedItemsImports = 4
