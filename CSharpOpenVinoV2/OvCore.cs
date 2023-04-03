@@ -37,19 +37,32 @@ namespace CSharpOpenVinoV2 {
     /// <param name="xml_path">path to xml file (.bin should have the same location)</param>
     /// <param name="device">device used for this model</param>
     /// <returns>a compile model object</returns>
-    public OvCompiledModel CompileModelFromFile(string xml_path, string device = "CPU") {
+    public OvCompiledModel CompileModelFromFile(string xml_path, int total_threads, string device = "CPU") {
       // convert strings to unmanaged strings
       IntPtr str_xml = Marshal.StringToHGlobalAnsi(xml_path);
       // convert device to unmanaged string
       IntPtr str_device = Marshal.StringToHGlobalAnsi(device);
+
+      IntPtr str_performance_hint_key = Marshal.StringToHGlobalAnsi("PERFORMANCE_HINT");
+      IntPtr str_performance_hint_value = Marshal.StringToHGlobalAnsi("LATENCY");
+      IntPtr str_num_threads_key = Marshal.StringToHGlobalAnsi("INFERENCE_NUM_THREADS");
+      IntPtr str_num_threads_value = Marshal.StringToHGlobalAnsi(total_threads.ToString());
+
       // retrieve a model object from that
       IntPtr model = IntPtr.Zero;
-      int status = ov_core_compile_model_from_file(ov_core_t, str_xml, str_device, 0, ref model);
+      int status = ov_core_compile_model_from_file(ov_core_t, str_xml, str_device, 2, ref model,
+        str_performance_hint_key, str_performance_hint_value,
+        str_num_threads_key, str_num_threads_value);
       // check if all ok
       if (status != 0) {
         var msg = OvError.GetErrorFromCode(status);
         throw new Exception(msg);
       }
+
+      Marshal.FreeHGlobal(str_num_threads_value);
+      Marshal.FreeHGlobal(str_num_threads_key);
+      Marshal.FreeHGlobal(str_performance_hint_value);
+      Marshal.FreeHGlobal(str_performance_hint_key);
       Marshal.FreeHGlobal(str_device);
       Marshal.FreeHGlobal(str_xml);
       // return a boxed object of model
@@ -108,13 +121,17 @@ namespace CSharpOpenVinoV2 {
     private static extern int ov_core_read_model(IntPtr ov_core_t, IntPtr str_xml, IntPtr str_bin, ref IntPtr model);
 
     [DllImport("openvino_c.dll", CharSet = CharSet.Ansi, CallingConvention = CallingConvention.Cdecl)]
-    private static extern int ov_core_compile_model_from_file(IntPtr ov_core_t, IntPtr str_xml, IntPtr str_device_name, int prop_args_size, ref IntPtr compiled_model);
-
-    [DllImport("openvino_c.dll", CharSet = CharSet.Ansi, CallingConvention = CallingConvention.Cdecl)]
     private static extern int ov_core_get_property(IntPtr ov_core_t, IntPtr device_str, IntPtr property_name_str, ref IntPtr property_value_str);
 
     [DllImport("openvino_c.dll", CharSet = CharSet.Ansi, CallingConvention = CallingConvention.Cdecl)]
     private static extern int ov_core_set_property(IntPtr ov_core_t, IntPtr device_str, IntPtr property_name_str, IntPtr property_value_str);
+
+    [DllImport("openvino_c.dll", CharSet = CharSet.Ansi, CallingConvention = CallingConvention.Cdecl)]
+    private static extern int ov_core_compile_model_from_file(IntPtr ov_core_t, IntPtr str_xml, IntPtr str_device_name,
+      int prop_args_size, ref IntPtr compiled_model,
+      IntPtr str_performance_hint_key, IntPtr str_performance_hint_value,
+      IntPtr str_num_threads_key, IntPtr str_num_threads_value);
+
     #endregion
   }
 }

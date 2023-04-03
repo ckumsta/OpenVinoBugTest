@@ -15,6 +15,9 @@ namespace ConsoleTestNuma {
     // create a static OvCore for the application
     static OvCore core = new OvCore();
 
+    // Create a single instance of Compiled Model
+    static OvCompiledModel compiledModel;
+
     // model's name
     const string model_xml = "model.xml";
 
@@ -30,15 +33,16 @@ namespace ConsoleTestNuma {
       // retrieve the number of NUMA nodes
       int nb_numa = Numa.GetNumaNumbers();
 
+      // compile the model with the following properties:
+      //      PERFORMANCE_HINT : LATENCY
+      //              AFFINITY : NUMA
+      // INFERENCE_NUM_THREADS : 8
+
+      // if correctly understood, that will create 8 inference inputs (4 per NUMA node).
+      compiledModel = core.CompileModelFromFile(model_xml, 8, "CPU");
+
       // allocate the threads'array
       Thread[] threads = new Thread[nb_numa];
-
-      // set properties (surprisingly AFFINITY set to CORE is changed to NUMA :) )
-      core.SetProperty("PERFORMANCE_HINT", "LATENCY");
-      core.SetProperty("AFFINITY", "CORE"); // CORE selected which will be changed
-      Console.WriteLine($"{DateTime.Now.ToString("HH:mm:ss.ff")} - PERFORMANCE_HINT: {core.GetProperty("PERFORMANCE_HINT")}");
-      Console.WriteLine($"{DateTime.Now.ToString("HH:mm:ss.ff")} - AFFINITY        : {core.GetProperty("AFFINITY")}");
-
       Console.WriteLine($"{DateTime.Now.ToString("HH:mm:ss.ff")} Launch {nb_numa} threads (1 per NUMA node) OpenVINO mode");
       Console.WriteLine();
 
@@ -58,6 +62,9 @@ namespace ConsoleTestNuma {
         Console.WriteLine();
       }
       #endregion
+
+      compiledModel.Dispose();
+      core.Dispose();
     }
 
     #region openvino inference thread, dispatch inference that should contained into the NUMA node of the thread
@@ -73,34 +80,26 @@ namespace ConsoleTestNuma {
 
       sb.AppendLine($"{DateTime.Now.ToString("HH:mm:ss.ff")} Thread[{numa}] on start: {Numa.GetThreadInformation()}");
 
-      // allocate all required objects to run inferences
-      using (var model = core.CompileModelFromFile(model_xml, "CPU"))
-      using (var infer = model.CreateInferRequest())
-      using (var input0 = infer.GetInputTensorByIndex(0))
-      using (var output0 = infer.GetOutputTensorByIndex(0)) {
+      // create 4 inference streams for this numa node
+      var inferRequests = new OvInferRequest[] {
+        compiledModel.CreateInferRequest(),
+        compiledModel.CreateInferRequest(),
+        compiledModel.CreateInferRequest(),
+        compiledModel.CreateInferRequest()
+      };
 
-        // warm-up inference (physical object allocation)
-        infer.Infer();
-        // display input and output tensor numa's location
-        sb.AppendLine($"{DateTime.Now.ToString("HH:mm:ss.ff")} Thread[{numa}]: Input Tensor" + Environment.NewLine + Numa.GetMemoryMappingInfos(input0.Data, (uint)input0.SizeBytes, "            "));
-        sb.AppendLine($"{DateTime.Now.ToString("HH:mm:ss.ff")} Thread[{numa}]: Output Tensor" + Environment.NewLine + Numa.GetMemoryMappingInfos(output0.Data, (uint)output0.SizeBytes, "            "));
-
-        // let's create some allocations through Marshal as reference:
-        IntPtr testMemory = Marshal.AllocHGlobal(input0.SizeBytes);
-        FillMemory(testMemory, (uint)input0.SizeBytes, 0); // force allocation
-          
-        // display test memory numa's location
-        sb.AppendLine($"{DateTime.Now.ToString("HH:mm:ss.ff")} Thread[{numa}]: Marshal Test Memory" + Environment.NewLine + Numa.GetMemoryMappingInfos(testMemory, (uint)input0.SizeBytes, "            "));
-
-        Marshal.FreeHGlobal(testMemory);
-
+      {
         // start a stopwatch to have bench based on duration
         var sw = new Stopwatch();
         sw.Restart();
 
         // loop until 10s duration is reached
         while (sw.ElapsedMilliseconds < 10000) {
-          infer.Infer();
+          Parallel.Invoke(
+            () => inferRequests[0].Infer(),
+            () => inferRequests[1].Infer(),
+            () => inferRequests[2].Infer(),
+            () => inferRequests[3].Infer());
         }
 
         // log the NUMA node before exit to observe any changes
