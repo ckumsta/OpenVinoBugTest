@@ -14,15 +14,14 @@ namespace ConsoleTestNuma {
 
     // create a static OvCore for the application
     static OvCore core = new OvCore();
-    static string model_xml = null;
+
+    // model's name
+    const string model_xml = "model.xml";
 
     // create a concurrent dictionary for the threads to store their logs and display them in the console grouped by thread
     static ConcurrentDictionary<int, string> threadsLogs = new ConcurrentDictionary<int, string>();
 
     static void Main(string[] args) {
-
-      // model name
-      model_xml = "model.xml";
 
       // let's look at the NUMA assignment for the main thread
       Console.WriteLine($"{DateTime.Now.ToString("HH:mm:ss.ff")} Model: {model_xml}");
