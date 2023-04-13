@@ -16,18 +16,21 @@ namespace ConsoleTestNuma {
     static OvCore core = new OvCore();
 
     // Create a single instance of Compiled Model
-    static OvCompiledModel compiledModel;
+    static OvCompiledModel compiledModel = null;
 
     // model's name
-    const string model_xml = "model.xml";
+    const string ModelXmlPath = "model.xml";
 
-    // create a concurrent dictionary for the threads to store their logs and display them in the console grouped by thread
-    static ConcurrentDictionary<int, string> threadsLogs = new ConcurrentDictionary<int, string>();
+    // number of threads of inference per NUMA node
+    const int NbThreadsPerNuma = 4;
+
+    // test duration in milliseconds
+    const long Duration_ms = 10_000;
 
     static void Main(string[] args) {
 
       // let's look at the NUMA assignment for the main thread
-      Console.WriteLine($"{DateTime.Now.ToString("HH:mm:ss.ff")} Model: {model_xml}");
+      Console.WriteLine($"{DateTime.Now.ToString("HH:mm:ss.ff")} Model: {ModelXmlPath}");
       Console.WriteLine($"{DateTime.Now.ToString("HH:mm:ss.ff")} Application: {Numa.GetThreadInformation()}");
 
       // retrieve the number of NUMA nodes
@@ -39,30 +42,28 @@ namespace ConsoleTestNuma {
       // INFERENCE_NUM_THREADS : 8
 
       // if correctly understood, that will create 8 inference inputs (4 per NUMA node).
-      compiledModel = core.CompileModelFromFile(model_xml, 8, "CPU");
+      compiledModel = core.CompileModelFromFile(ModelXmlPath, 8, "CPU");
 
       // allocate the threads'array
       Thread[] threads = new Thread[nb_numa];
-      Console.WriteLine($"{DateTime.Now.ToString("HH:mm:ss.ff")} Launch {nb_numa} threads (1 per NUMA node) OpenVINO mode");
-      Console.WriteLine();
+      Console.WriteLine($"{DateTime.Now.ToString("HH:mm:ss.ff")} Launch {nb_numa} threads (1 per NUMA node)");
+      Console.WriteLine($"{DateTime.Now.ToString("HH:mm:ss.ff")} Starting inferences for {Duration_ms / 1000.0:F2} secondes ...");
 
-      #region second test with model ...
+      // create 1 main thread per numa node
       for (int numa = 0; numa < nb_numa; numa++) {
         threads[numa] = new Thread(new ParameterizedThreadStart(AssignedNumaInference));
         threads[numa].SetApartmentState(ApartmentState.STA);
         threads[numa].Priority = ThreadPriority.Normal;
         threads[numa].Start(numa);
-        Thread.Sleep(1000); // we add a 1s delay in the start to make sure that tensors are not allocated simultaneously from both threads
       }
 
       // wait for the threads to finish and display their logs on the console
-      for (int numa = 0; numa < nb_numa; numa++) {
-        threads[numa].Join();
-        Console.WriteLine(threadsLogs[numa]);
-        Console.WriteLine();
-      }
-      #endregion
+      foreach (var thread in threads)
+        thread.Join();
 
+      Console.WriteLine($"{DateTime.Now.ToString("HH:mm:ss.ff")} Inferences done.");
+
+      // dispose all allocated objects
       compiledModel.Dispose();
       core.Dispose();
     }
@@ -72,45 +73,31 @@ namespace ConsoleTestNuma {
 
       // retrieve the numa node of this thread
       int numa = (int)numa_node;
+
       // assign this thread to the NUMA node
       Numa.SetThreadAffinities(numa);
 
-      // the stringbuilder will be used to log
-      StringBuilder sb = new StringBuilder();
+      // create NbThreadsPerNuma inference streams for this numa node
+      var inferRequests = Enumerable
+          .Range(0, NbThreadsPerNuma)
+          .Select(i => compiledModel.CreateInferRequest())
+          .ToArray();
 
-      sb.AppendLine($"{DateTime.Now.ToString("HH:mm:ss.ff")} Thread[{numa}] on start: {Numa.GetThreadInformation()}");
+      // start a stopwatch to have bench based on duration
+      var sw = new Stopwatch();
+      sw.Restart();
 
-      // create 4 inference streams for this numa node
-      var inferRequests = new OvInferRequest[] {
-        compiledModel.CreateInferRequest(),
-        compiledModel.CreateInferRequest(),
-        compiledModel.CreateInferRequest(),
-        compiledModel.CreateInferRequest()
-      };
-
-      {
-        // start a stopwatch to have bench based on duration
-        var sw = new Stopwatch();
-        sw.Restart();
-
-        // loop until 10s duration is reached
-        while (sw.ElapsedMilliseconds < 10000) {
-          Parallel.Invoke(
-            () => inferRequests[0].Infer(),
-            () => inferRequests[1].Infer(),
-            () => inferRequests[2].Infer(),
-            () => inferRequests[3].Infer());
-        }
-
-        // log the NUMA node before exit to observe any changes
-        sb.Append($"{DateTime.Now.ToString("HH:mm:ss.ff")} Thread[{numa}] on exit: {Numa.GetThreadInformation()}");
-        threadsLogs.AddOrUpdate(numa, sb.ToString(), (key, old) => sb.ToString());
+      // loop until Duration_ms duration is reached
+      while (sw.ElapsedMilliseconds < Duration_ms) {
+        // execute parallel infer request inferences
+        Parallel.ForEach(inferRequests, (infer_request) => infer_request.Infer());
       }
+
+      // release objects InferRequest
+      foreach (var ir in inferRequests)
+        ir.Dispose();
+
     }
     #endregion
-
-    // import method to clean unmanaged memory and force its allocation
-    [DllImport("kernel32.dll", EntryPoint = "RtlFillMemory", SetLastError = false)]
-    static extern void FillMemory(IntPtr destination, uint length, byte fill);
   }
 }
